@@ -89,7 +89,7 @@ export const backup = async () => {
 
   const date = new Date().toISOString();
   const timestamp = date.replace(/[:.]+/g, '-');
-  const filename = `${env.BACKUP_PROJECT}-${timestamp}.tar.gz`;
+  const filename = `${env.BACKUP_PROJECT_NAME}-${timestamp}.tar.gz`;
   const filepath = path.join(os.tmpdir(), filename);
 
   await dumpToFile(filepath);
