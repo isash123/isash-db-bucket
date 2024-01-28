@@ -5,18 +5,8 @@ import { createReadStream, unlink, statSync } from "fs";
 import { filesize } from "filesize";
 import path from "path";
 import os from "os";
-import AdmZip from "adm-zip";
+
 import { env } from "./env";
-
-
-async function zipAndEncryptFile(filepath: string) {
-  const zip = new AdmZip();
-  zip.addLocalFile(filepath);
-  zip.encrypt(env.BACKUP_PASSWORD); // Add password protection
-  const zipPath = filepath + ".zip";
-  await zip.writeZip(zipPath);
-  return zipPath;
-}
 
 const uploadToS3 = async ({ name, path }: { name: string, path: string }) => {
   console.log("Uploading backup to S3...");
@@ -50,7 +40,7 @@ const dumpToFile = async (filePath: string) => {
   console.log("Dumping DB to file...");
 
   await new Promise((resolve, reject) => {
-    exec(`pg_dump -d ${env.BACKUP_DATABASE_URL} -Fc > ${filePath}`, (error, stdout, stderr) => {
+    exec(`pg_dump -d ${env.BACKUP_DATABASE_URL} -Ft > ${filePath}`, (error, stdout, stderr) => {
       if (error) {
         reject({ error: error, stderr: stderr.trimEnd() });
         return;
@@ -100,17 +90,11 @@ export const backup = async () => {
   const date = new Date().toISOString();
   const timestamp = date.replace(/[:.]+/g, '-');
   const filename = `${env.BACKUP_PROJECT_NAME}-${timestamp}.dump`;
-  const dumpFilePath = path.join(os.tmpdir(), filename);
+  const filepath = path.join(os.tmpdir(), filename);
 
-  await dumpToFile(dumpFilePath);
-
-  // Zip and encrypt the dump file
-  const zipFilePath = await zipAndEncryptFile(dumpFilePath);
-
-  await uploadToS3({ name: filename + ".zip", path: zipFilePath });
-
-  await deleteFile(dumpFilePath);
-  await deleteFile(zipFilePath); // Delete both dump and zip files
+  await dumpToFile(filepath);
+  await uploadToS3({ name: filename, path: filepath });
+  await deleteFile(filepath);
 
   console.log("DB backup complete...");
-};
+}
