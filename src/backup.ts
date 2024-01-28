@@ -46,13 +46,6 @@ const dumpToFile = async (filePath: string) => {
         return;
       }
 
-      // check if archive is valid and contains data
-      // const isValidArchive = (execSync(`gzip -cd ${filePath} | head -c1`).length == 1) ? true : false;
-      // if (isValidArchive == false) {
-      //   reject({ error: "Backup archive file is invalid or empty; check for errors above" });
-      //   return;
-      // }
-
       // not all text in stderr will be a critical error, print the error / warning
       if (stderr != "") {
         console.log({ stderr: stderr.trimEnd() });
