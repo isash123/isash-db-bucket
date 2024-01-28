@@ -5,7 +5,6 @@ import { createReadStream, unlink, statSync } from "fs";
 import { filesize } from "filesize";
 import path from "path";
 import os from "os";
-import zlib from "zlib";  // Add this line for gzip compression
 
 import { env } from "./env";
 
@@ -40,22 +39,26 @@ const uploadToS3 = async ({ name, path }: { name: string, path: string }) => {
 const dumpToFile = async (filePath: string) => {
   console.log("Dumping DB to file...");
 
-  await new Promise((resolve, reject) => {
-    const dumpCommand = `pg_dump -d ${env.BACKUP_DATABASE_URL} -Ft | gzip -c | openssl enc -e -aes-256-cbc -k ${env.BACKUP_PASSWORD} > ${filePath}.gz`;
+  const dumpCommand = `PGPASSWORD=${env.BACKUP_PASSWORD} pg_dump -d ${env.BACKUP_DATABASE_URL} -Ft > ${filePath}`;
 
+  await new Promise((resolve, reject) => {
     exec(dumpCommand, (error, stdout, stderr) => {
       if (error) {
         reject({ error: error, stderr: stderr.trimEnd() });
         return;
       }
 
+      // not all text in stderr will be a critical error, print the error / warning
+      if (stderr != "") {
+        console.log({ stderr: stderr.trimEnd() });
+      }
+
       console.log("Backup archive file is valid");
-      console.log("Backup filesize:", filesize(statSync(`${filePath}.gz`).size));
+      console.log("Backup filesize:", filesize(statSync(filePath).size));
 
       // if stderr contains text, let the user know that it was potentially just a warning message
       if (stderr != "") {
-        console.log({ stderr: stderr.trimEnd() });
-        console.log(`Potential warnings detected; Please ensure the backup file "${path.basename(filePath)}.gz" contains all needed data`);
+        console.log(`Potential warnings detected; Please ensure the backup file "${path.basename(filePath)}" contains all needed data`);
       }
 
       resolve(undefined);
@@ -64,7 +67,6 @@ const dumpToFile = async (filePath: string) => {
 
   console.log("DB dumped to file...");
 }
-
 
 const deleteFile = async (path: string) => {
   console.log("Deleting file...");
