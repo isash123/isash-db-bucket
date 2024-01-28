@@ -1,19 +1,24 @@
-import { exec } from "child_process";
+import { exec, execSync } from "child_process";
 import { S3Client, S3ClientConfig } from "@aws-sdk/client-s3";
 import { Upload } from "@aws-sdk/lib-storage";
-import { createReadStream, unlink, statSync } from "fs";
+import { createReadStream, unlink, statSync, createWriteStream } from "fs";
+import { pipeline } from "stream";
+import { promisify } from "util";
 import { filesize } from "filesize";
 import path from "path";
 import os from "os";
 import { env } from "./env";
+import zlib from "zlib";
 
-const uploadToS3 = async ({ name, path }: { name: string; path: string }) => {
+const pipelineAsync = promisify(pipeline);
+
+const uploadToS3 = async ({ name, path }: { name: string, path: string }) => {
   console.log("Uploading backup to S3...");
 
   const bucket = env.AWS_S3_BUCKET;
 
   const clientOptions: S3ClientConfig = {
-    region: env.AWS_S3_REGION,
+    region: env.AWS_S3_REGION
   };
 
   if (env.AWS_S3_ENDPOINT) {
@@ -38,9 +43,12 @@ const uploadToS3 = async ({ name, path }: { name: string; path: string }) => {
 const dumpToFile = async (filePath: string) => {
   console.log("Dumping DB to file...");
 
+  const gzipFilePath = `${filePath}.gz`;
+
+  // Dump to a gzipped file with password protection
   await new Promise((resolve, reject) => {
-    // Dump the database to a temporary uncompressed file
-    exec(`pg_dump -d ${env.BACKUP_DATABASE_URL} -Ft > ${filePath}`, (error, stdout, stderr) => {
+    const dumpCommand = `pg_dump -d ${env.BACKUP_DATABASE_URL} -Ft | gzip --best --encrypt --stdout --passphrase=${env.BACKUP_PASSWORD} > ${gzipFilePath}`;
+    exec(dumpCommand, (error, stdout, stderr) => {
       if (error) {
         reject({ error: error, stderr: stderr.trimEnd() });
         return;
@@ -52,11 +60,11 @@ const dumpToFile = async (filePath: string) => {
       }
 
       console.log("Backup archive file is valid");
-      console.log("Backup filesize:", filesize(statSync(filePath).size));
+      console.log("Backup filesize:", filesize(statSync(gzipFilePath).size));
 
       // if stderr contains text, let the user know that it was potentially just a warning message
       if (stderr != "") {
-        console.log(`Potential warnings detected; Please ensure the backup file "${path.basename(filePath)}" contains all needed data`);
+        console.log(`Potential warnings detected; Please ensure the backup file "${path.basename(gzipFilePath)}" contains all needed data`);
       }
 
       resolve(undefined);
@@ -64,6 +72,7 @@ const dumpToFile = async (filePath: string) => {
   });
 
   console.log("DB dumped to file...");
+  return gzipFilePath;
 };
 
 const deleteFile = async (path: string) => {
@@ -81,28 +90,13 @@ export const backup = async () => {
   console.log("Initiating DB backup...");
 
   const date = new Date().toISOString();
-  const timestamp = date.replace(/[:.]+/g, '-');
+  const timestamp = date.replace(/[:.]+/g, "-");
   const filename = `${env.BACKUP_PROJECT_NAME}-${timestamp}.dump`;
-  const zipFilename = `${filename}.zip`;
   const filepath = path.join(os.tmpdir(), filename);
-  const zipPath = path.join(os.tmpdir(), zipFilename);
 
-  await dumpToFile(filepath);
-
-  // Zip the dump file with a password
-  await new Promise((resolve, reject) => {
-    exec(`zip -P ${env.BACKUP_PASSWORD} ${zipPath} ${filepath}`, (error, stdout, stderr) => {
-      if (error) {
-        reject({ error: error, stderr: stderr.trimEnd() });
-        return;
-      }
-      resolve(undefined);
-    });
-  });
-
-  await uploadToS3({ name: zipFilename, path: zipPath });
-  await deleteFile(filepath);
-  await deleteFile(zipPath);
+  const gzippedFilePath = await dumpToFile(filepath);
+  await uploadToS3({ name: filename, path: gzippedFilePath });
+  await deleteFile(gzippedFilePath);
 
   console.log("DB backup complete...");
 };
