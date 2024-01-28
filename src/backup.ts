@@ -46,8 +46,6 @@ const dumpToFile = async (filePath: string) => {
         return;
       }
 
-      // check if archive is valid and contains data
-
       // not all text in stderr will be a critical error, print the error / warning
       if (stderr != "") {
         console.log({ stderr: stderr.trimEnd() });
