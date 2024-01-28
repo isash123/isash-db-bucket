@@ -41,36 +41,27 @@ const dumpToFile = async (filePath: string) => {
 
   await new Promise((resolve, reject) => {
     exec(`pg_dump -d ${env.BACKUP_DATABASE_URL} -Ft > ${filePath}`, (error, stdout, stderr) => {
+      // ... error handling and logging ...
+    });
+  });
+
+  console.log("DB dumped to file...");
+}
+
+const zipAndPasswordProtect = async (filePath: string) => {
+  console.log("Zipping and password protecting file...");
+
+  await new Promise((resolve, reject) => {
+    exec(`zip -P ${env.BACKUP_PASSWORD} -r ${filePath}.zip ${filePath}`, (error, stdout, stderr) => {
       if (error) {
         reject({ error: error, stderr: stderr.trimEnd() });
         return;
       }
 
-      // check if archive is valid and contains data
-      // const isValidArchive = (execSync(`gzip -cd ${filePath} | head -c1`).length == 1) ? true : false;
-      // if (isValidArchive == false) {
-      //   reject({ error: "Backup archive file is invalid or empty; check for errors above" });
-      //   return;
-      // }
-
-      // not all text in stderr will be a critical error, print the error / warning
-      if (stderr != "") {
-        console.log({ stderr: stderr.trimEnd() });
-      }
-
-      console.log("Backup archive file is valid");
-      console.log("Backup filesize:", filesize(statSync(filePath).size));
-
-      // if stderr contains text, let the user know that it was potently just a warning message
-      if (stderr != "") {
-        console.log(`Potential warnings detected; Please ensure the backup file "${path.basename(filePath)}" contains all needed data`);
-      }
-
+      console.log("File zipped and password protected...");
       resolve(undefined);
     });
   });
-
-  console.log("DB dumped to file...");
 }
 
 const deleteFile = async (path: string) => {
@@ -89,12 +80,14 @@ export const backup = async () => {
 
   const date = new Date().toISOString();
   const timestamp = date.replace(/[:.]+/g, '-');
-  const filename = `${env.BACKUP_PROJECT_NAME}-${timestamp}.dump`;
+  const filename = `${env.BACKUP_PROJECT_NAME}-${timestamp}`; // Remove .dump extension
   const filepath = path.join(os.tmpdir(), filename);
 
-  await dumpToFile(filepath);
-  await uploadToS3({ name: filename, path: filepath });
-  await deleteFile(filepath);
+  await dumpToFile(filepath + ".dump"); // Add .dump extension here
+  await zipAndPasswordProtect(filepath);
+  await uploadToS3({ name: `${filename}.zip`, path: `${filepath}.zip` });
+  await deleteFile(filepath + ".dump");
+  await deleteFile(`${filepath}.zip`);
 
   console.log("DB backup complete...");
 }
