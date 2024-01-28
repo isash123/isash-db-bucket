@@ -40,7 +40,7 @@ const dumpToFile = async (filePath: string) => {
   console.log("Dumping DB to file...");
 
   await new Promise((resolve, reject) => {
-    exec(`PGPASSWORD=${env.BACKUP_PASSWORD} pg_dump -d ${env.BACKUP_DATABASE_URL} -Ft > ${filePath}`, (error, stdout, stderr) => {
+    exec(`BACKUP_PASSWORD=${env.BACKUP_PASSWORD} pg_dump -d ${env.BACKUP_DATABASE_URL} -Ft > ${filePath}`, (error, stdout, stderr) => {
       if (error) {
         reject({ error: error, stderr: stderr.trimEnd() });
         return;
