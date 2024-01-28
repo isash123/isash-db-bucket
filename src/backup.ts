@@ -1,12 +1,14 @@
-import { exec, execSync } from "child_process";
-import { S3Client, S3ClientConfig } from "@aws-sdk/client-s3";
-import { Upload } from "@aws-sdk/lib-storage";
-import { createReadStream, unlink, statSync } from "fs";
-import { filesize } from "filesize";
-import path from "path";
-import os from "os";
+import { createReadStream, createWriteStream, unlink, statSync } from 'fs';
+import { pipeline, Transform } from 'stream';
+import * as zlib from 'zlib';
+import * as crypto from 'crypto';
+import { promisify } from 'util';
+import path from 'path';
+import os from 'os';
 
-import { env } from "./env";
+import { env } from './env';
+
+const pipelineAsync = promisify(pipeline);
 
 const uploadToS3 = async ({ name, path }: { name: string, path: string }) => {
   console.log("Uploading backup to S3...");
@@ -36,42 +38,47 @@ const uploadToS3 = async ({ name, path }: { name: string, path: string }) => {
   console.log("Backup uploaded to S3...");
 }
 
+
 const dumpToFile = async (filePath: string) => {
-  console.log("Dumping DB to file...");
+  console.log('Dumping DB to file...');
 
-  await new Promise((resolve, reject) => {
-    exec(`pg_dump -d ${env.BACKUP_DATABASE_URL} -Fc > ${filePath}`, (error, stdout, stderr) => {
-      if (error) {
-        reject({ error: error, stderr: stderr.trimEnd() });
-        return;
-      }
+  const dumpStream = exec(`pg_dump -d ${env.BACKUP_DATABASE_URL} -Fc`);
 
-      // check if archive is valid and contains data
-      // const isValidArchive = (execSync(`gzip -cd ${filePath} | head -c1`).length == 1) ? true : false;
-      // if (isValidArchive == false) {
-      //   reject({ error: "Backup archive file is invalid or empty; check for errors above" });
-      //   return;
-      // }
+  const compressStream = zlib.createGzip();
+  const encryptStream = crypto.createCipher('aes-256-cbc', env.BACKUP_ENCRYPTION_PASSWORD);
 
-      // not all text in stderr will be a critical error, print the error / warning
-      if (stderr != "") {
-        console.log({ stderr: stderr.trimEnd() });
-      }
+  const writeStream = createWriteStream(filePath);
 
-      console.log("Backup archive file is valid");
-      console.log("Backup filesize:", filesize(statSync(filePath).size));
+  // Pipe the dump output through compression and encryption streams to the file
+  await pipelineAsync(
+    dumpStream.stdout!,
+    compressStream,
+    encryptStream,
+    writeStream
+  );
 
-      // if stderr contains text, let the user know that it was potently just a warning message
-      if (stderr != "") {
-        console.log(`Potential warnings detected; Please ensure the backup file "${path.basename(filePath)}" contains all needed data`);
-      }
-
-      resolve(undefined);
-    });
+  // Handle errors
+  dumpStream.on('error', (error) => {
+    console.error('Error dumping database:', error);
+    throw error;
   });
 
-  console.log("DB dumped to file...");
-}
+  writeStream.on('error', (error) => {
+    console.error('Error writing to file:', error);
+    throw error;
+  });
+
+  // Wait for the streams to finish
+  await Promise.all([
+    new Promise<void>((resolve) => dumpStream.on('close', resolve)),
+    new Promise<void>((resolve) => writeStream.on('close', resolve))
+  ]);
+
+  console.log('Backup archive file is valid');
+  console.log('Backup filesize:', filesize(statSync(filePath).size);
+
+  console.log('DB dumped to file...');
+};
 
 const deleteFile = async (path: string) => {
   console.log("Deleting file...");
