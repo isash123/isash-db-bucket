@@ -1,25 +1,24 @@
-import { exec, execSync } from "child_process";
+import { exec } from "child_process";
 import { S3Client, S3ClientConfig } from "@aws-sdk/client-s3";
 import { Upload } from "@aws-sdk/lib-storage";
 import { createReadStream, unlink, statSync } from "fs";
 import { filesize } from "filesize";
 import path from "path";
 import os from "os";
-
 import { env } from "./env";
 
-const uploadToS3 = async ({ name, path }: { name: string, path: string }) => {
+const uploadToS3 = async ({ name, path }: { name: string; path: string }) => {
   console.log("Uploading backup to S3...");
 
   const bucket = env.AWS_S3_BUCKET;
 
   const clientOptions: S3ClientConfig = {
-    region: env.AWS_S3_REGION
-  }
+    region: env.AWS_S3_REGION,
+  };
 
   if (env.AWS_S3_ENDPOINT) {
-    console.log(`Using custom endpoint: ${env.AWS_S3_ENDPOINT}`)
-    clientOptions['endpoint'] = env.AWS_S3_ENDPOINT;
+    console.log(`Using custom endpoint: ${env.AWS_S3_ENDPOINT}`);
+    clientOptions["endpoint"] = env.AWS_S3_ENDPOINT;
   }
 
   const client = new S3Client(clientOptions);
@@ -34,12 +33,13 @@ const uploadToS3 = async ({ name, path }: { name: string, path: string }) => {
   }).done();
 
   console.log("Backup uploaded to S3...");
-}
+};
 
 const dumpToFile = async (filePath: string) => {
   console.log("Dumping DB to file...");
 
   await new Promise((resolve, reject) => {
+    // Dump the database to a temporary uncompressed file
     exec(`pg_dump -d ${env.BACKUP_DATABASE_URL} -Ft > ${filePath}`, (error, stdout, stderr) => {
       if (error) {
         reject({ error: error, stderr: stderr.trimEnd() });
@@ -54,7 +54,7 @@ const dumpToFile = async (filePath: string) => {
       console.log("Backup archive file is valid");
       console.log("Backup filesize:", filesize(statSync(filePath).size));
 
-      // if stderr contains text, let the user know that it was potently just a warning message
+      // if stderr contains text, let the user know that it was potentially just a warning message
       if (stderr != "") {
         console.log(`Potential warnings detected; Please ensure the backup file "${path.basename(filePath)}" contains all needed data`);
       }
@@ -64,7 +64,7 @@ const dumpToFile = async (filePath: string) => {
   });
 
   console.log("DB dumped to file...");
-}
+};
 
 const deleteFile = async (path: string) => {
   console.log("Deleting file...");
@@ -75,7 +75,7 @@ const deleteFile = async (path: string) => {
     });
     resolve(undefined);
   });
-}
+};
 
 export const backup = async () => {
   console.log("Initiating DB backup...");
@@ -83,11 +83,26 @@ export const backup = async () => {
   const date = new Date().toISOString();
   const timestamp = date.replace(/[:.]+/g, '-');
   const filename = `${env.BACKUP_PROJECT_NAME}-${timestamp}.dump`;
+  const zipFilename = `${filename}.zip`;
   const filepath = path.join(os.tmpdir(), filename);
+  const zipPath = path.join(os.tmpdir(), zipFilename);
 
   await dumpToFile(filepath);
-  await uploadToS3({ name: filename, path: filepath });
+
+  // Zip the dump file with a password
+  await new Promise((resolve, reject) => {
+    exec(`zip -P ${env.BACKUP_PASSWORD} ${zipPath} ${filepath}`, (error, stdout, stderr) => {
+      if (error) {
+        reject({ error: error, stderr: stderr.trimEnd() });
+        return;
+      }
+      resolve(undefined);
+    });
+  });
+
+  await uploadToS3({ name: zipFilename, path: zipPath });
   await deleteFile(filepath);
+  await deleteFile(zipPath);
 
   console.log("DB backup complete...");
-}
+};
