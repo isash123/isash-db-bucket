@@ -40,9 +40,16 @@ const dumpToFile = async (filePath: string) => {
   console.log("Dumping DB to file...");
 
   await new Promise((resolve, reject) => {
-    exec(`pg_dump -d ${env.BACKUP_DATABASE_URL} -Ft > ${filePath}`, (error, stdout, stderr) => {
+    exec(`pg_dump --dbname=${env.BACKUP_DATABASE_URL} --format=tar | gzip > ${filePath}`, (error, stdout, stderr) => {
       if (error) {
         reject({ error: error, stderr: stderr.trimEnd() });
+        return;
+      }
+
+      // check if archive is valid and contains data
+      const isValidArchive = (execSync(`gzip -cd ${filePath} | head -c1`).length == 1) ? true : false;
+      if (isValidArchive == false) {
+        reject({ error: "Backup archive file is invalid or empty; check for errors above" });
         return;
       }
 
@@ -82,7 +89,7 @@ export const backup = async () => {
 
   const date = new Date().toISOString();
   const timestamp = date.replace(/[:.]+/g, '-');
-  const filename = `${env.BACKUP_PROJECT_NAME}-${timestamp}.dump`;
+  const filename = `${env.BACKUP_PROJECT_NAME}-${timestamp}.tar.gz`;
   const filepath = path.join(os.tmpdir(), filename);
 
   await dumpToFile(filepath);
